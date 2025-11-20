@@ -1,58 +1,54 @@
 name: Daily Quote Commit (Random time + Sequential)
 
+permissions:
+  contents: write
+
 on:
   schedule:
-    - cron: "0 0 * * *"   # старт каждый день в 00:00 UTC
+    - cron: "0 5 * * *"   # ежедневно в 05:00 UTC (с задержкой внутри)
   workflow_dispatch:
 
 jobs:
-  commit-quote:
+  update-quote:
     runs-on: ubuntu-latest
     steps:
-      - name: Random delay (0-12 hours)
-        run: |
-          # случайная задержка до 12 часов (43200 секунд)
-          DELAY=$(( RANDOM % 43200 ))
-          echo "Sleeping for $DELAY seconds (= $((DELAY/3600)) hours)"
-          sleep $DELAY
-
       - name: Checkout repo
         uses: actions/checkout@v3
 
-      - name: Ensure counter exists
+      - name: Random delay up to 3 hours
         run: |
-          # если нет counter.txt — создаём со значением 1
-          if [ ! -f counter.txt ]; then echo 1 > counter.txt; fi
+          DELAY=$(( RANDOM % 10800 ))
+          echo "Sleeping for $DELAY seconds (~$((DELAY/3600)) hours)"
+          sleep $DELAY
 
-      - name: Select next quote sequentially
+      - name: Ensure counter file exists
         run: |
-          # считаем количество цитат — строки, которые не пустые
-          TOTAL_QUOTES=$(grep -cve '^[[:space:]]*$' quotes.txt || true)
-          if [ -z "$TOTAL_QUOTES" ] || [ "$TOTAL_QUOTES" -lt 1 ]; then
-            echo "No quotes found in quotes.txt; exiting" && exit 1
+          if [ ! -f counter.txt ]; then echo "1" > counter.txt; fi
+
+      - name: Select next quote
+        run: |
+          QUOTES_FILE="quotes.txt"
+          COUNTER_FILE="counter.txt"
+
+          total=$(grep -cve '^[[:space:]]*$' "$QUOTES_FILE")
+          current=$(cat "$COUNTER_FILE" | tr -d '[:space:]')
+          if [ "$current" -gt "$total" ] || [ "$current" -lt 1 ]; then
+            current=1
           fi
 
-          CURRENT=$(cat counter.txt | tr -d '[:space:]')
-          if ! echo "$CURRENT" | grep -qE '^[0-9]+$'; then CURRENT=1; fi
+          quote=$(grep -ve '^[[:space:]]*$' "$QUOTES_FILE" | sed -n "${current}p")
+          echo "$quote" > daily.txt
 
-          # на случай, если counter вышел за границы
-          if [ "$CURRENT" -gt "$TOTAL_QUOTES" ]; then CURRENT=1; fi
-
-          # берем N-ю непустую строку из quotes.txt
-          QUOTE=$(grep -ve '^[[:space:]]*$' quotes.txt | sed -n "${CURRENT}p")
-
-          echo "$QUOTE" > daily.txt
-          echo "Selected quote (#${CURRENT}/${TOTAL_QUOTES}): $QUOTE"
-
-          # увеличиваем счётчик
-          NEXT=$((CURRENT + 1))
-          if [ $NEXT -gt $TOTAL_QUOTES ]; then NEXT=1; fi
-          echo $NEXT > counter.txt
+          next=$(( current + 1 ))
+          if [ "$next" -gt "$total" ]; then
+            next=1
+          fi
+          echo "$next" > "$COUNTER_FILE"
 
       - name: Commit and push changes
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
           git add daily.txt counter.txt
-          git commit -m "Daily quote #$(cat counter.txt)" || echo "Nothing to commit"
+          git commit -m "Daily quote update" || echo "Nothing to commit"
           git push
